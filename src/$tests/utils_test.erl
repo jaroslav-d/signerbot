@@ -14,9 +14,9 @@
 response(Body) -> {ok, {ok, ok, Body}}.
 
 build_request_test() ->
-  ?assertMatch({_Url, _Headers, _ContentType, _Params}, utils:build_request(getUpdates, {offset, 0})),
-  ?assertMatch({_Url, _Headers, _ContentType, _Params}, utils:build_request(getUpdates, [{offset, 0}])),
-  ?assertMatch({_Url, _Headers, _ContentType, <<"{\"offset\":0}">>}, utils:build_request(getUpdates, {offset, 0})).
+  ?assertMatch({_Url, _Headers, _ContentType, _Params}, utils:build_post_request(getUpdates, {offset, 0})),
+  ?assertMatch({_Url, _Headers, _ContentType, _Params}, utils:build_post_request(getUpdates, [{offset, 0}])),
+  ?assertMatch({_Url, _Headers, _ContentType, <<"{\"offset\":0}">>}, utils:build_post_request(getUpdates, {offset, 0})).
 
 parse_response_test() ->
   BodyOne = <<"{\"ok\": true, \"result\": []}">>,

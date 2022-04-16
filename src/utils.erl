@@ -11,15 +11,39 @@
 -include("token.hrl").
 
 %% API
--export([build_request/2, parse_response/2]).
+-export([build_url/2, build_post_request/2, parse_response/2]).
+-export([sendDocument/2]).
 
 -define(URL, "https://api.telegram.org/bot").
+-define(URL_FILE, "https://api.telegram.org/file/bot").
 
-build_request(getUpdates, Params) ->
-  Url = ?URL ++ ?TOKEN ++ "/" ++ "getUpdates",
+sendDocument(ChatId, PathFile) ->
+  os:cmd("curl -v -F \"chat_id=" ++ ChatId ++ "\" -F document=@" ++ PathFile ++ " " ++ ?URL ++ ?TOKEN ++ "/sendDocument").
+
+build_url(file_download, FilePath) ->
+  ?URL_FILE ++ ?TOKEN ++ "/" ++ binary:bin_to_list(FilePath);
+build_url(sendMessage, {chat_id, ChatId, text, Text}) ->
+  ?URL ++ ?TOKEN ++ "/sendMessage?chat_id=" ++ integer_to_list(ChatId) ++ "&text=" ++ binary:bin_to_list(Text);
+build_url(getFile, FileId) ->
+  ?URL ++ ?TOKEN ++ "/getFile?file_id=" ++ binary:bin_to_list(FileId);
+build_url(getUpdates, {offset, Offset}) ->
+  ?URL ++ ?TOKEN ++ "/getUpdates?offset=" ++ integer_to_list(Offset).
+
+
+build_post_request(getFile, FileId) ->
+  Url = ?URL ++ ?TOKEN ++ "/getFile",
+  build_post_request({url, Url}, [{file_id, FileId}]);
+build_post_request(getUpdates, {offset, Offset}) ->
+  Url = ?URL ++ ?TOKEN ++ "/getUpdates",
+  build_post_request({url, Url}, [{offset, Offset}]);
+build_post_request(getUpdates, Params) ->
+  Url = ?URL ++ ?TOKEN ++ "/getUpdates",
+  build_post_request({url, Url}, Params);
+build_post_request({url, Url}, [HParams|TParams]) ->
   Headers = [{"Content-Type","application/json"}],
   ContentType = "application/json",
-  {Url, Headers, ContentType, jsx:encode([Params])}.
+  {Url, Headers, ContentType, jsx:encode([HParams|TParams])}.
+
 
 parse_response(getUpdates, {ok, {_, _, Body}}) ->
   [{<<"ok">>,true}, {<<"result">>, Updates}] = jsx:decode(Body),
@@ -30,6 +54,12 @@ parse_response(getUpdates, {updates, [HeadU|TailU], data, Data}) ->
   Element = parse_response(update, HeadU),
   parse_response(getUpdates, {updates, TailU, data, Data ++ Element});
 parse_response(getUpdates, _Else) -> empty;
+
+parse_response(getFile, {ok, {_, _, Body}}) ->
+  [{<<"ok">>,true}, {<<"result">>, Updates}] = jsx:decode(Body),
+  {_, FilePath} = find_rec(Updates, <<"file_path">>),
+  FilePath;
+
 
 parse_response(update, Update) ->
   Message = find_rec(Update, <<"message">>),

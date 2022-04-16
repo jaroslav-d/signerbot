@@ -17,5 +17,6 @@ _build
 *.iml
 rebar3.crashdump
 *~
-/resource
+/resources
 /src/token.hrl
+/src/sign_data.hrl
