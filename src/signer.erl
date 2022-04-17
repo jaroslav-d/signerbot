@@ -17,7 +17,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {offset=0}).
+-record(state, {offset=0, auth_chats=[], key_alias, sign_password, keystore}).
 
 %%%===================================================================
 %%% Spawning and gen_server implementation
@@ -27,8 +27,25 @@ start_link() ->
   gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 init([]) ->
+  {ok, BinaryAuthChats} = file:read_file("auth_chats.json"),
+  [{<<"chats">>, AuthChats}] = jsx:decode(BinaryAuthChats),
+  os:cmd("cd resources"),
+  {ok, BinaryAuthChats} = file:read_file("sign_data.json"),
+  [{_, BinKeyAlias}, {_, BinPassword}, {_, BinKeyStore}] = jsx:decode(BinaryAuthChats),
+  {KeyAlias, Password, KeyStore} =
+    {
+      binary_to_list(BinKeyAlias),
+      binary_to_list(BinPassword),
+      binary_to_list(BinKeyStore)
+    },
+  os:cmd("cd ../"),
   ok = gen_server:cast(?SERVER, launch),
-  {ok, #state{}}.
+  {ok, #state{
+    auth_chats = AuthChats,
+    key_alias = KeyAlias,
+    sign_password = Password,
+    keystore = KeyStore}
+  }.
 
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
@@ -47,18 +64,16 @@ handle_cast(read_chat, State) ->
   gen_server:cast(?SERVER, read_chat),
   {noreply, State};
 handle_cast({handle_message, {Uid, ChatId, ?PASSWORD}}, State) ->
-  {ok, BinaryAuthChats} = file:read_file("auth_chats.json"),
-  [{<<"chats">>, AuthChats}] = jsx:decode(BinaryAuthChats),
+  AuthChats = State#state.auth_chats,
   NewBinaryAuthChats = jsx:encode([{<<"chats">>, AuthChats ++ [Uid]}]),
   ok = file:write_file("auth_chats.json", NewBinaryAuthChats),
   httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, <<"вы прошли аутентификацию"/utf8>>})),
-  {noreply, State#state{offset = Uid + 1}};
+  {noreply, State#state{offset = Uid + 1, auth_chats = AuthChats ++ [Uid]}};
 handle_cast({handle_message, {Uid, ChatId, Text}}, State) ->
   httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, Text})),
   {noreply, State#state{offset = Uid + 1}};
 handle_cast({handle_message, Data = {_Uid, ChatId, _FileName, _FileId}}, State) ->
-  {ok, BinaryAuthChats} = file:read_file("auth_chats.json"),
-  [{<<"chats">>, AuthChats}] = jsx:decode(BinaryAuthChats),
+  AuthChats = State#state.auth_chats,
   AuthenticatedData = [ X || X <- AuthChats, X =:= ChatId],
   handle_cast({sign_process, Data, AuthenticatedData}, State);
 handle_cast({sign_process, {Uid, ChatId, _FileName, _FileId}, []}, State) ->
@@ -81,14 +96,7 @@ handle_cast({sign_apk, Data}, State) ->
   {Uid, ChatId, FileNameBin, FileId} = Data,
   FileName = binary:bin_to_list(FileNameBin),
   os:cmd("cd resources"),
-  {ok, BinaryAuthChats} = file:read_file("sign_data.json"),
-  [{_, BinKeyAlias}, {_, BinPassword}, {_, BinKeyStore}] = jsx:decode(BinaryAuthChats),
-  {KeyAlias, Password, KeyStore} =
-    {
-      binary_to_list(BinKeyAlias),
-      binary_to_list(BinPassword),
-      binary_to_list(BinKeyStore)
-    },
+  {KeyAlias, Password, KeyStore} = {State#state.key_alias, State#state.sign_password, State#state.keystore},
   os:cmd("mkdir folder_" ++ Uid),
   FolderFile = "folder_" ++ Uid,
   os:cmd("mv ../" ++ FileName ++ " " ++ FolderFile),
