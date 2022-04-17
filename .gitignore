@@ -18,5 +18,4 @@ _build
 rebar3.crashdump
 *~
 /resources
-/src/token.hrl
-/src/sign_data.hrl
+src/params_bot.hrl

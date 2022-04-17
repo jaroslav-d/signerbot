@@ -8,7 +8,7 @@
 %%%-------------------------------------------------------------------
 -module(utils).
 -author("jaroslav").
--include("token.hrl").
+-include("params_bot.hrl").
 
 %% API
 -export([build_url/2, build_post_request/2, parse_response/2]).
