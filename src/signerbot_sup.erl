@@ -30,12 +30,12 @@ init([]) ->
                  intensity => 0,
                  period => 1},
     ChildSpecs = [
-%%      #{
-%%        id => signer,
-%%        start => {signer, start_link, []},
-%%        restart => permanent,
-%%        shutdown => brutal_kill
-%%      }
+      #{
+        id => signer,
+        start => {signer, start_link, []},
+        restart => permanent,
+        shutdown => brutal_kill
+      }
     ],
     {ok, {SupFlags, ChildSpecs}}.
 

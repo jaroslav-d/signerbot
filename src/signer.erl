@@ -29,16 +29,16 @@ start_link() ->
 init([]) ->
   {ok, BinaryAuthChats} = file:read_file("auth_chats.json"),
   [{<<"chats">>, AuthChats}] = jsx:decode(BinaryAuthChats),
-  os:cmd("cd resources"),
-  {ok, BinaryAuthChats} = file:read_file("sign_data.json"),
-  [{_, BinKeyAlias}, {_, BinPassword}, {_, BinKeyStore}] = jsx:decode(BinaryAuthChats),
+  c:cd("resources"),
+  {ok, BinarySignData} = file:read_file("sign_data.json"),
+  [{_, BinKeyAlias}, {_, BinPassword}, {_, BinKeyStore}] = jsx:decode(BinarySignData),
   {KeyAlias, Password, KeyStore} =
     {
       binary_to_list(BinKeyAlias),
       binary_to_list(BinPassword),
       binary_to_list(BinKeyStore)
     },
-  os:cmd("cd ../"),
+  c:cd("../"),
   ok = gen_server:cast(?SERVER, launch),
   {ok, #state{
     auth_chats = AuthChats,
@@ -65,19 +65,25 @@ handle_cast(read_chat, State) ->
   {noreply, State};
 handle_cast({handle_message, {Uid, ChatId, ?PASSWORD}}, State) ->
   AuthChats = State#state.auth_chats,
-  NewBinaryAuthChats = jsx:encode([{<<"chats">>, AuthChats ++ [Uid]}]),
+  NewBinaryAuthChats = jsx:encode([{<<"chats">>, AuthChats ++ [ChatId]}]),
   ok = file:write_file("auth_chats.json", NewBinaryAuthChats),
-  httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, <<"вы прошли аутентификацию"/utf8>>})),
-  {noreply, State#state{offset = Uid + 1, auth_chats = AuthChats ++ [Uid]}};
+  Message = {chat_id, ChatId, text, <<"вы прошли аутентификацию"/utf8>>},
+  Request = utils:build_post_request(sendMessage, Message),
+  httpc:request(post, Request, [], [{body_format, binary}]),
+  {noreply, State#state{offset = Uid + 1, auth_chats = AuthChats ++ [ChatId]}};
 handle_cast({handle_message, {Uid, ChatId, Text}}, State) ->
-  httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, Text})),
+  Message = {chat_id, ChatId, text, Text},
+  Request = utils:build_post_request(sendMessage, Message),
+  httpc:request(post, Request, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1}};
 handle_cast({handle_message, Data = {_Uid, ChatId, _FileName, _FileId}}, State) ->
   AuthChats = State#state.auth_chats,
   AuthenticatedData = [ X || X <- AuthChats, X =:= ChatId],
   handle_cast({sign_process, Data, AuthenticatedData}, State);
 handle_cast({sign_process, {Uid, ChatId, _FileName, _FileId}, []}, State) ->
-  httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, <<"отказано в доступе"/utf8>>})),
+  Message = {chat_id, ChatId, text, <<"отказано в доступе"/utf8>>},
+  Request = utils:build_post_request(sendMessage, Message),
+  httpc:request(post, Request, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1}};
 handle_cast({sign_process, Data = {Uid, _ChatId, _FileName, _FileId}, _}, State) ->
   handle_cast({download_apk, Data}, State),
@@ -85,32 +91,39 @@ handle_cast({sign_process, Data = {Uid, _ChatId, _FileName, _FileId}, _}, State)
   handle_cast({push_apk, Data}, State);
 handle_cast({download_apk, Data}, State) ->
   {Uid, ChatId, FileName, FileId} = Data,
-  Request = utils:build_url(getFile, FileId),
-  Response = httpc:request(get, {Request, []}, [], [{body_format, binary}]),
-  FilePath = utils:parse_response(getFile, Response),
+  RequestGetFile = utils:build_url(getFile, FileId),
+  ResponseGetFile = httpc:request(get, {RequestGetFile, []}, [], [{body_format, binary}]),
+  FilePath = utils:parse_response(getFile, ResponseGetFile),
   UrlDownload = utils:build_url(file_download, FilePath),
   httpc:request(get, {UrlDownload, []}, [], [{stream, binary:bin_to_list(FileName)}]),
-  httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, <<"Downloaded ", FileName/binary>>})),
+  Message = {chat_id, ChatId, text, <<"Downloaded ", FileName/binary>>},
+  RequestSendMessage = utils:build_post_request(sendMessage, Message),
+  httpc:request(post, RequestSendMessage, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1}};
 handle_cast({sign_apk, Data}, State) ->
   {Uid, ChatId, FileNameBin, FileId} = Data,
   FileName = binary:bin_to_list(FileNameBin),
-  os:cmd("cd resources"),
+  c:cd("resources"),
   {KeyAlias, Password, KeyStore} = {State#state.key_alias, State#state.sign_password, State#state.keystore},
-  os:cmd("mkdir folder_" ++ Uid),
-  FolderFile = "folder_" ++ Uid,
-  os:cmd("mv ../" ++ FileName ++ " " ++ FolderFile),
+  io:format("~p ~p ~p ~n", [KeyAlias, Password, KeyStore]),
+  FolderFile = "folder_" ++ integer_to_list(Uid),
+  os:cmd("mkdir " ++ FolderFile),
+  os:cmd("mv ../" ++ FileName ++ " ."),
   SignFileName = "sign-" ++ FileName,
-  os:cmd("./apksigner sign --ks " ++ KeyStore ++ " --ks-key-alias " ++ KeyAlias ++ " --ks-pass " ++ Password ++ " --out " ++ SignFileName ++ " " ++ FileName),
+  os:cmd("./apksigner sign --ks " ++ KeyStore ++ " --ks-key-alias " ++ KeyAlias ++ " --ks-pass pass:" ++ Password ++ " --out " ++ SignFileName ++ " " ++ FileName),
+  os:cmd("mv " ++ FileName ++ " " ++ FolderFile),
   os:cmd("mv " ++ SignFileName ++ " " ++ FolderFile),
-  os:cmd("cd ../"),
-  httpc:request(utils:build_url(sendMessage, {chat_id, ChatId, text, <<"File processed ", FileNameBin/binary>>})),
+  os:cmd("rm " ++ SignFileName ++ ".idsig"),
+  c:cd("../"),
+  Message = {chat_id, ChatId, text, <<"File processed ", FileNameBin/binary>>},
+  Request = utils:build_post_request(sendMessage, Message),
+  httpc:request(post, Request, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1}};
 handle_cast({push_apk, Data}, State) ->
   {Uid, ChatId, FileNameBin, FileId} = Data,
   FileName = binary:bin_to_list(FileNameBin),
   {ok, Dir} = file:get_cwd(),
-  PathFile = Dir ++ "/resources/folder_" ++ Uid ++ "/sign" ++ FileName,
+  PathFile = Dir ++ "/resources/folder_" ++ integer_to_list(Uid) ++ "/sign-" ++ FileName,
   utils:sendDocument(ChatId, PathFile),
   {noreply, State#state{offset = Uid + 1}}.
 

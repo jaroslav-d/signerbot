@@ -18,11 +18,13 @@
 -define(URL_FILE, "https://api.telegram.org/file/bot").
 
 sendDocument(ChatId, PathFile) ->
-  os:cmd("curl -v -F \"chat_id=" ++ ChatId ++ "\" -F document=@" ++ PathFile ++ " " ++ ?URL ++ ?TOKEN ++ "/sendDocument").
+  os:cmd("curl -v -F \"chat_id=" ++ integer_to_list(ChatId) ++ "\" -F document=@" ++ PathFile ++ " "
+    ++ ?URL ++ ?TOKEN ++ "/sendDocument").
 
 build_url(file_download, FilePath) ->
   ?URL_FILE ++ ?TOKEN ++ "/" ++ binary:bin_to_list(FilePath);
 build_url(sendMessage, {chat_id, ChatId, text, Text}) ->
+%%  todo get not working
   ?URL ++ ?TOKEN ++ "/sendMessage?chat_id=" ++ integer_to_list(ChatId) ++ "&text=" ++ binary:bin_to_list(Text);
 build_url(getFile, FileId) ->
   ?URL ++ ?TOKEN ++ "/getFile?file_id=" ++ binary:bin_to_list(FileId);
@@ -30,15 +32,15 @@ build_url(getUpdates, {offset, Offset}) ->
   ?URL ++ ?TOKEN ++ "/getUpdates?offset=" ++ integer_to_list(Offset).
 
 
+build_post_request(sendMessage, {chat_id, ChatId, text, Text}) ->
+  Url = ?URL ++ ?TOKEN ++ "/sendMessage",
+  build_post_request({url, Url}, [{chat_id, ChatId}, {text, Text}]);
 build_post_request(getFile, FileId) ->
   Url = ?URL ++ ?TOKEN ++ "/getFile",
   build_post_request({url, Url}, [{file_id, FileId}]);
 build_post_request(getUpdates, {offset, Offset}) ->
   Url = ?URL ++ ?TOKEN ++ "/getUpdates",
   build_post_request({url, Url}, [{offset, Offset}]);
-build_post_request(getUpdates, Params) ->
-  Url = ?URL ++ ?TOKEN ++ "/getUpdates",
-  build_post_request({url, Url}, Params);
 build_post_request({url, Url}, [HParams|TParams]) ->
   Headers = [{"Content-Type","application/json"}],
   ContentType = "application/json",
