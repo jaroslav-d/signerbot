@@ -85,21 +85,27 @@ handle_cast({sign_process, {Uid, ChatId, _FileName, _FileId}, []}, State) ->
   Request = utils:build_post_request(sendMessage, Message),
   httpc:request(post, Request, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1}};
-handle_cast({sign_process, Data = {Uid, _ChatId, _FileName, _FileId}, _}, State) ->
-  handle_cast({download_apk, Data}, State),
-  handle_cast({sign_apk, Data}, State),
-  handle_cast({push_apk, Data}, State);
-handle_cast({download_apk, Data}, State) ->
-  {Uid, ChatId, FileName, FileId} = Data,
+handle_cast({sign_process, Data, _}, State) ->
+  handle_cast({download_apk, Data}, State);
+handle_cast({download_apk, Data = {_Uid, _ChatId, _FileName, FileId} }, State) ->
   RequestGetFile = utils:build_url(getFile, FileId),
   ResponseGetFile = httpc:request(get, {RequestGetFile, []}, [], [{body_format, binary}]),
   FilePath = utils:parse_response(getFile, ResponseGetFile),
+  handle_cast({download_apk, Data, FilePath}, State);
+handle_cast({download_apk, {Uid, ChatId, _FileName, _FileId}, empty}, State) ->
+  Message = {chat_id, ChatId, text, <<"размер файла не должен превышать 20 мб"/utf8>>},
+  Request = utils:build_post_request(sendMessage, Message),
+  httpc:request(post, Request, [], [{body_format, binary}]),
+  {noreply, State#state{offset = Uid + 1}};
+handle_cast({download_apk, Data, FilePath}, State) ->
+  {_Uid, ChatId, FileName, _FileId} = Data,
   UrlDownload = utils:build_url(file_download, FilePath),
   httpc:request(get, {UrlDownload, []}, [], [{stream, binary:bin_to_list(FileName)}]),
   Message = {chat_id, ChatId, text, <<"Downloaded ", FileName/binary>>},
   RequestSendMessage = utils:build_post_request(sendMessage, Message),
   httpc:request(post, RequestSendMessage, [], [{body_format, binary}]),
-  {noreply, State#state{offset = Uid + 1}};
+  handle_cast({sign_apk, Data}, State),
+  handle_cast({push_apk, Data}, State);
 handle_cast({sign_apk, Data}, State) ->
   {Uid, ChatId, FileNameBin, FileId} = Data,
   FileName = binary:bin_to_list(FileNameBin),

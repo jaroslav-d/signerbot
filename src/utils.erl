@@ -58,7 +58,9 @@ parse_response(getUpdates, {updates, [HeadU|TailU], data, Data}) ->
 parse_response(getUpdates, _Else) -> empty;
 
 parse_response(getFile, {ok, {_, _, Body}}) ->
-  [{<<"ok">>,true}, {<<"result">>, Updates}] = jsx:decode(Body),
+  parse_response(getFile, jsx:decode(Body));
+parse_response(getFile, [{<<"ok">>, false}, _]) -> empty;
+parse_response(getFile, [{<<"ok">>, true}, {<<"result">>, Updates}]) ->
   {_, FilePath} = find_rec(Updates, <<"file_path">>),
   FilePath;
 
