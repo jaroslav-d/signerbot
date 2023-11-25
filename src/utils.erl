@@ -12,12 +12,13 @@
 
 %% API
 -export([build_url/2, build_post_request/2, parse_response/2]).
--export([sendDocument/2]).
+-export([send_document/2]).
+-export([get_name_file/1]).
 
 -define(URL, "https://api.telegram.org/bot").
 -define(URL_FILE, "https://api.telegram.org/file/bot").
 
-sendDocument(ChatId, PathFile) ->
+send_document(ChatId, PathFile) ->
   os:cmd("curl -v -F \"chat_id=" ++ integer_to_list(ChatId) ++ "\" -F document=@" ++ PathFile ++ " "
     ++ ?URL ++ ?TOKEN ++ "/sendDocument").
 
@@ -59,7 +60,7 @@ parse_response(getUpdates, _Else) -> empty;
 
 parse_response(getFile, {ok, {_, _, Body}}) ->
   parse_response(getFile, jsx:decode(Body));
-parse_response(getFile, [{<<"ok">>, false}, _]) -> empty;
+parse_response(getFile, [{<<"ok">>, false} | _]) -> empty;
 parse_response(getFile, [{<<"ok">>, true}, {<<"result">>, Updates}]) ->
   {_, FilePath} = find_rec(Updates, <<"file_path">>),
   FilePath;
@@ -104,7 +105,7 @@ find_rec([Head|Tail], Key) ->
 find_rec(_Arg, _Key) -> not_found.
 
 
-getNameFile([H|T]) -> getNameFile([H],T).
-getNameFile(_H, [47|T]) -> getNameFile([],T);
-getNameFile(H, [H1|[]]) -> H ++ [H1];
-getNameFile(H, [H1|T]) -> getNameFile(H ++ [H1], T).
+get_name_file([H|T]) -> get_name_file([H],T).
+get_name_file(_H, [47|T]) -> get_name_file([],T);
+get_name_file(H, [H1|[]]) -> H ++ [H1];
+get_name_file(H, [H1|T]) -> get_name_file(H ++ [H1], T).
