@@ -73,83 +73,49 @@ handle_cast({handle_message, {Uid, ChatId, ?PASSWORD}}, State) ->
   httpc:request(post, Request, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1, auth_chats = AuthChats ++ [ChatId]}};
 handle_cast({handle_message, {Uid, ChatId, FileLinkBin = <<"http"/utf8, _/binary>>}}, State) ->
-  handle_cast({sign_process, {FileLinkBin}, {Uid, ChatId}}, State);
+  FileLink = unicode:characters_to_list(FileLinkBin),
+  FileName = utils:get_name_file(FileLink),
+  FileNameBin = unicode:characters_to_binary(FileName),
+  SignFileName = "'sign-" ++ unicode:characters_to_list(FileNameBin) ++ "'",
+  FolderFile = "folder_" ++ integer_to_list(Uid),
+  ForSigner = {State#state.key_alias, State#state.sign_password, State#state.keystore},
+  Handlers = [
+    fun() -> access_check(ChatId, State#state.auth_chats) end,
+    fun() -> {text, <<"Downloading ... "/utf8>>} end,
+    fun() -> download_link_apk(FileLink, FileName, FileNameBin) end,
+    fun() -> sign_apk(FileName, FileNameBin, SignFileName, FolderFile, ForSigner) end,
+    fun() -> push_apk(ChatId, FolderFile, SignFileName) end
+  ],
+  Messenger = fun(Text) ->
+    Message = {chat_id, ChatId, text, Text},
+    Request = utils:build_post_request(sendMessage, Message),
+    httpc:request(post, Request, [], [{body_format, binary}])
+              end,
+  ok = messenger_chain(Messenger, chain_of_responsibility(Handlers)),
+  {noreply, State#state{offset = Uid + 1}};
 handle_cast({handle_message, {Uid, ChatId, Text}}, State) ->
   Message = {chat_id, ChatId, text, Text},
   Request = utils:build_post_request(sendMessage, Message),
   httpc:request(post, Request, [], [{body_format, binary}]),
   {noreply, State#state{offset = Uid + 1}};
 handle_cast({handle_message, {Uid, ChatId, FileNameBin, FileId}}, State) ->
-  handle_cast({sign_process, {FileNameBin, FileId}, {Uid, ChatId}}, State);
-handle_cast({sign_process, Data, {Uid, ChatId} }, State) ->
-  AuthChats = State#state.auth_chats,
-  AuthenticatedData = [ X || X <- AuthChats, X =:= ChatId],
-  handle_cast({sign_process, Data, {Uid, ChatId, AuthenticatedData} }, State);
-handle_cast({sign_process, _, {Uid, ChatId, []}}, State) ->
-  Message = {chat_id, ChatId, text, <<"отказано в доступе"/utf8>>},
-  Request = utils:build_post_request(sendMessage, Message),
-  httpc:request(post, Request, [], [{body_format, binary}]),
-  {noreply, State#state{offset = Uid + 1}};
-handle_cast({sign_process, {FileLinkBin}, {Uid, ChatId, _AuthenticatedData}}, State) ->
-  handle_cast({download_link_apk, {Uid, ChatId, FileLinkBin}}, State);
-handle_cast({download_link_apk, {Uid, ChatId, FileLinkBin}}, State) ->
-  FileLink = unicode:characters_to_list(FileLinkBin),
-  FileName = utils:get_name_file(FileLink),
-  FileNameBin = unicode:characters_to_binary(FileName),
-  Query = "curl -v -u " ++ ?REPO_LOGIN ++ ":" ++ ?REPO_PASSWORD ++ " -X GET "
-    ++ FileLink ++ " --output " ++ FileName,
-  os:cmd(Query),
-  Message = {chat_id, ChatId, text, <<"Downloaded ", FileNameBin/binary>>},
-  RequestSendMessage = utils:build_post_request(sendMessage, Message),
-  httpc:request(post, RequestSendMessage, [], [{body_format, binary}]),
-  handle_cast({sign_apk, {Uid, ChatId, FileNameBin}}, State),
-  handle_cast({push_apk, {Uid, ChatId, FileNameBin}}, State);
-handle_cast({sign_process, {FileNameBin, FileId}, {Uid, ChatId, _AuthenticatedData}}, State) ->
-  handle_cast({download_apk, {Uid, ChatId, FileNameBin, FileId}}, State);
-handle_cast({download_apk, {Uid, ChatId, FileNameBin, FileId} }, State) ->
-  RequestGetFile = utils:build_url(getFile, FileId),
-  ResponseGetFile = httpc:request(get, {RequestGetFile, []}, [], [{body_format, binary}]),
-  FilePath = utils:parse_response(getFile, ResponseGetFile),
-  handle_cast({download_apk, {Uid, ChatId, FileNameBin}, FilePath}, State);
-handle_cast({download_apk, {Uid, ChatId, _FileNameBin}, empty}, State) ->
-  Message = {chat_id, ChatId, text, <<"размер файла не должен превышать 20 мб"/utf8>>},
-  Request = utils:build_post_request(sendMessage, Message),
-  httpc:request(post, Request, [], [{body_format, binary}]),
-  {noreply, State#state{offset = Uid + 1}};
-handle_cast({download_apk, Data = {_Uid, ChatId, FileNameBin}, FilePath}, State) ->
-  UrlDownload = utils:build_url(file_download, FilePath),
   FileName = unicode:characters_to_list(FileNameBin),
-  httpc:request(get, {UrlDownload, []}, [], [{stream, FileName}]),
-  Message = {chat_id, ChatId, text, <<"Downloaded ", FileNameBin/binary>>},
-  RequestSendMessage = utils:build_post_request(sendMessage, Message),
-  httpc:request(post, RequestSendMessage, [], [{body_format, binary}]),
-  handle_cast({sign_apk, Data}, State),
-  handle_cast({push_apk, Data}, State);
-handle_cast({sign_apk, Data}, State) ->
-  {Uid, ChatId, FileNameBin} = Data,
-  FileName = "'" ++ unicode:characters_to_list(FileNameBin) ++ "'",
-  c:cd("resources"),
-  {KeyAlias, Password, KeyStore} = {State#state.key_alias, State#state.sign_password, State#state.keystore},
-  io:format("~p ~p ~p ~n", [KeyAlias, Password, KeyStore]),
   FolderFile = "folder_" ++ integer_to_list(Uid),
-  os:cmd("mkdir " ++ FolderFile),
-  os:cmd("mv ../" ++ FileName ++ " ."),
   SignFileName = "'sign-" ++ unicode:characters_to_list(FileNameBin) ++ "'",
-  os:cmd("./apksigner sign --ks " ++ KeyStore ++ " --ks-key-alias " ++ KeyAlias ++ " --ks-pass pass:" ++ Password ++ " --out " ++ SignFileName ++ " " ++ FileName),
-  os:cmd("mv " ++ FileName ++ " " ++ FolderFile),
-  os:cmd("mv " ++ SignFileName ++ " " ++ FolderFile),
-  os:cmd("rm " ++ SignFileName ++ ".idsig"),
-  c:cd("../"),
-  Message = {chat_id, ChatId, text, <<"File processed ", FileNameBin/binary>>},
-  Request = utils:build_post_request(sendMessage, Message),
-  httpc:request(post, Request, [], [{body_format, binary}]),
-  {noreply, State#state{offset = Uid + 1}};
-handle_cast({push_apk, Data}, State) ->
-  {Uid, ChatId, FileNameBin} = Data,
-  SignFileName = "/'sign-" ++ unicode:characters_to_list(FileNameBin) ++ "'",
-  {ok, Dir} = file:get_cwd(),
-  PathFile = Dir ++ "/resources/folder_" ++ integer_to_list(Uid) ++ SignFileName,
-  utils:send_document(ChatId, PathFile),
+  ForSigner = {State#state.key_alias, State#state.sign_password, State#state.keystore},
+  Handlers = [
+    fun() -> access_check(ChatId, State#state.auth_chats) end,
+    fun() -> {text, <<"Downloading ... "/utf8>>} end,
+    fun() -> download_apk(FileName, FileNameBin, FileId) end,
+    fun() -> sign_apk(FileName, FileNameBin, SignFileName, FolderFile, ForSigner) end,
+    fun() -> push_apk(ChatId, FolderFile, SignFileName) end
+  ],
+  Messenger = fun(Text) ->
+    Message = {chat_id, ChatId, text, Text},
+    Request = utils:build_post_request(sendMessage, Message),
+    httpc:request(post, Request, [], [{body_format, binary}])
+              end,
+  ok = messenger_chain(Messenger, chain_of_responsibility(Handlers)),
   {noreply, State#state{offset = Uid + 1}}.
 
 handle_info(_Info, State) ->
@@ -164,3 +130,63 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+messenger_chain(Messenger, {Message, finish}) ->
+  Messenger(Message),
+  ok;
+messenger_chain(Messenger, {Message, ChainHandlers}) ->
+  Messenger(Message),
+  messenger_chain(Messenger, chain_of_responsibility(ChainHandlers));
+messenger_chain(_, _) -> ok.
+
+
+chain_of_responsibility([Handler | Others]) ->
+  Result = Handler(),
+  chain_of_responsibility(Result, Others).
+chain_of_responsibility({exception, Message}, _) -> {Message, finish};
+chain_of_responsibility({text, Message}, []) -> {Message, finish};
+chain_of_responsibility({text, Message}, Handlers) -> {Message, Handlers};
+chain_of_responsibility(_, []) -> ok;
+chain_of_responsibility(_, Handlers) -> chain_of_responsibility(Handlers).
+
+access_check(ChatId, AuthChats) ->
+  AuthenticatedData = [ X || X <- AuthChats, X =:= ChatId],
+  access_check(AuthenticatedData).
+access_check([]) -> {exception, <<"отказано в доступе"/utf8>>};
+access_check(_AuthenticatedData) -> ok.
+
+download_link_apk(FileLink, FileName, FileNameBin) ->
+  Query = "curl -v -u " ++ ?REPO_LOGIN ++ ":" ++ ?REPO_PASSWORD ++ " -X GET "
+    ++ FileLink ++ " --output " ++ FileName,
+  os:cmd(Query),
+  {text, <<"Downloaded ", FileNameBin/binary>>}.
+
+download_apk(FileName, FileNameBin, FileId) ->
+  RequestGetFile = utils:build_url(getFile, FileId),
+  ResponseGetFile = httpc:request(get, {RequestGetFile, []}, [], [{body_format, binary}]),
+  FilePath = utils:parse_response(getFile, ResponseGetFile),
+  download_apk(FileName, FileNameBin, file_path, FilePath).
+download_apk(_, _, file_path, empty) ->
+  {exception, <<"размер файла не должен превышать 20 мб"/utf8>>};
+download_apk(FileName, FileNameBin, file_path, FilePath) ->
+  UrlDownload = utils:build_url(file_download, FilePath),
+  httpc:request(get, {UrlDownload, []}, [], [{stream, FileName}]),
+  {text, <<"Downloaded ", FileNameBin/binary>>}.
+
+sign_apk(FileName, FileNameBin, SignFileName, FolderFile, {KeyAlias, Password, KeyStore}) ->
+  c:cd("resources"),
+  os:cmd("mkdir " ++ FolderFile),
+  os:cmd("mv ../" ++ FileName ++ " ."),
+  os:cmd("./apksigner sign --ks " ++ KeyStore ++ " --ks-key-alias "
+    ++ KeyAlias ++ " --ks-pass pass:" ++ Password ++ " --out " ++ SignFileName ++ " " ++ FileName),
+  os:cmd("mv " ++ FileName ++ " " ++ FolderFile),
+  os:cmd("mv " ++ SignFileName ++ " " ++ FolderFile),
+  os:cmd("rm " ++ SignFileName ++ ".idsig"),
+  c:cd("../"),
+  {text, <<"File processed ", FileNameBin/binary>>}.
+
+push_apk(ChatId, FolderFile, SignFileName) ->
+  {ok, Dir} = file:get_cwd(),
+  PathFile = Dir ++ "/resources/" ++ FolderFile ++ "/" ++ SignFileName,
+  utils:send_document(ChatId, PathFile),
+  ok.
