@@ -76,15 +76,16 @@ handle_cast({handle_message, {Uid, ChatId, FileLinkBin = <<"http"/utf8, _/binary
   FileLink = unicode:characters_to_list(FileLinkBin),
   FileName = utils:get_name_file(FileLink),
   FileNameBin = unicode:characters_to_binary(FileName),
-  SignFileName = "'sign-" ++ unicode:characters_to_list(FileNameBin) ++ "'",
+  SignFileName = "sign-" ++ unicode:characters_to_list(FileNameBin),
   FolderFile = "folder_" ++ integer_to_list(Uid),
+  FilePath = "resources/" ++ FolderFile ++ "/" ++ SignFileName,
   ForSigner = {State#state.key_alias, State#state.sign_password, State#state.keystore},
   Handlers = [
     fun() -> access_check(ChatId, State#state.auth_chats) end,
     fun() -> {text, <<"Downloading ... "/utf8>>} end,
     fun() -> download_link_apk(FileLink, FileName, FileNameBin) end,
     fun() -> sign_apk(FileName, FileNameBin, SignFileName, FolderFile, ForSigner) end,
-    fun() -> push_apk(ChatId, FolderFile, SignFileName) end
+    fun() -> push_link_apk(FilePath, SignFileName) end
   ],
   Messenger = fun(Text) ->
     Message = {chat_id, ChatId, text, Text},
@@ -101,7 +102,7 @@ handle_cast({handle_message, {Uid, ChatId, Text}}, State) ->
 handle_cast({handle_message, {Uid, ChatId, FileNameBin, FileId}}, State) ->
   FileName = unicode:characters_to_list(FileNameBin),
   FolderFile = "folder_" ++ integer_to_list(Uid),
-  SignFileName = "'sign-" ++ unicode:characters_to_list(FileNameBin) ++ "'",
+  SignFileName = "sign-" ++ unicode:characters_to_list(FileNameBin),
   ForSigner = {State#state.key_alias, State#state.sign_password, State#state.keystore},
   Handlers = [
     fun() -> access_check(ChatId, State#state.auth_chats) end,
@@ -156,8 +157,8 @@ access_check([]) -> {exception, <<"отказано в доступе"/utf8>>};
 access_check(_AuthenticatedData) -> ok.
 
 download_link_apk(FileLink, FileName, FileNameBin) ->
-  Query = "curl -v -u " ++ ?REPO_LOGIN ++ ":" ++ ?REPO_PASSWORD ++ " -X GET "
-    ++ FileLink ++ " --output " ++ FileName,
+  Query = "curl -v -u " ++ ?REPO_LOGIN ++ ":" ++ ?REPO_PASSWORD ++ " -X GET '"
+    ++ FileLink ++ "' --output '" ++ FileName ++ "'",
   os:cmd(Query),
   {text, <<"Downloaded ", FileNameBin/binary>>}.
 
@@ -176,17 +177,28 @@ download_apk(FileName, FileNameBin, file_path, FilePath) ->
 sign_apk(FileName, FileNameBin, SignFileName, FolderFile, {KeyAlias, Password, KeyStore}) ->
   c:cd("resources"),
   os:cmd("mkdir " ++ FolderFile),
-  os:cmd("mv ../" ++ FileName ++ " ."),
+  os:cmd("mv ../'" ++ FileName ++ "' ."),
   os:cmd("./apksigner sign --ks " ++ KeyStore ++ " --ks-key-alias "
-    ++ KeyAlias ++ " --ks-pass pass:" ++ Password ++ " --out " ++ SignFileName ++ " " ++ FileName),
-  os:cmd("mv " ++ FileName ++ " " ++ FolderFile),
-  os:cmd("mv " ++ SignFileName ++ " " ++ FolderFile),
-  os:cmd("rm " ++ SignFileName ++ ".idsig"),
+    ++ KeyAlias ++ " --ks-pass pass:" ++ Password
+    ++ " --out '" ++ SignFileName ++ "' '" ++ FileName ++ "'"),
+  os:cmd("mv '" ++ FileName ++ "' " ++ FolderFile),
+  os:cmd("mv '" ++ SignFileName ++ "' " ++ FolderFile),
+  os:cmd("rm '" ++ SignFileName ++ ".idsig'"),
   c:cd("../"),
   {text, <<"File processed ", FileNameBin/binary>>}.
 
 push_apk(ChatId, FolderFile, SignFileName) ->
   {ok, Dir} = file:get_cwd(),
-  PathFile = Dir ++ "/resources/" ++ FolderFile ++ "/" ++ SignFileName,
+  PathFile = Dir ++ "/resources/" ++ FolderFile ++ "/'" ++ SignFileName ++ "'",
   utils:send_document(ChatId, PathFile),
   ok.
+
+push_link_apk(FilePath, SignFileName) ->
+  LoginPass = ?REPO_LOGIN ++ ":" ++ ?REPO_PASSWORD,
+  Query = "curl -v -u " ++ LoginPass ++ " -X POST " ++ ?UPLOAD_LINK
+    ++ " -H 'accept: application/json' " ++ "-H 'Content-Type: multipart/form-data' "
+    ++ "-F 'raw.directory=/' " ++ "-F 'raw.asset1=@" ++ FilePath ++ ";type=text/apk' "
+    ++ "-F 'raw.asset1.filename=" ++ SignFileName ++ "' ",
+  os:cmd(Query),
+  BinarySignFileName = unicode:characters_to_binary(SignFileName),
+  {text, <<"Application uploaded to repo by name: "/utf8, BinarySignFileName/binary>>}.
